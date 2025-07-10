@@ -3,7 +3,7 @@
 require 'httparty'
 require 'csv'
 require 'time'
-require 'rodc'
+require 'rdoc'
 
 # ETH Wallet Transaction Exporter
 #
@@ -17,9 +17,6 @@ require 'rodc'
 #
 # Environment:
 #   ETHERSCAN_API_KEY - Your Etherscan API key
-#
-ETHERSCAN_API_KEY = ENV['ETHERSCAN_API_KEY']
-
 ##
 # EthTxExporter fetches and exports Ethereum wallet transactions from Etherscan.
 #
@@ -46,9 +43,8 @@ class EthTxExporter
   # Raises if ETHERSCAN_API_KEY is not set.
   def initialize(address)
     @address = address
-    return if ETHERSCAN_API_KEY && !ETHERSCAN_API_KEY.empty?
-
-    raise 'ETHERSCAN_API_KEY environment variable not set.'
+    api_key = ENV['ETHERSCAN_API_KEY']
+    raise 'ETHERSCAN_API_KEY environment variable not set.' unless api_key && !api_key.empty?
   end
 
   ##
@@ -61,7 +57,7 @@ class EthTxExporter
     params = {
       module: 'account',
       address: @address,
-      apikey: ETHERSCAN_API_KEY,
+      apikey: ENV['ETHERSCAN_API_KEY'],
       action: action
     }
     begin
@@ -198,6 +194,7 @@ class EthTxExporter
   # timestamp - Unix timestamp (string or int).
   # Returns formatted string or empty string on error.
   def format_time(timestamp)
+    return '' if timestamp.nil? || timestamp.to_s.strip.empty?
     Time.at(timestamp.to_i).utc.strftime('%Y-%m-%d %H:%M:%S')
   rescue StandardError
     ''
