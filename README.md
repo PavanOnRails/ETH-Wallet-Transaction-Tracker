@@ -28,7 +28,7 @@ brew install ruby
 1. Clone the repository:
 
    ```bash
-   git clone <repo-url>
+   git clone [<repo-url>](https://github.com/PavanOnRails/ETH-Wallet-Transaction-Tracker.git)
    cd ETH-Wallet-Transaction-Tracker
    ```
 
@@ -47,7 +47,7 @@ brew install ruby
 
 ## Usage
 
-1. Get your Etherscan API key from <https://etherscan.io/myapikey>
+1. Get your Etherscan API key from <[https://etherscan.io/apidashboard]>
 
 2. Run the script with your wallet address:
 
