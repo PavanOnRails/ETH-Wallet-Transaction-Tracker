@@ -1,16 +1,32 @@
+
 require 'httparty'
 require 'csv'
 require 'time'
 
-ETHERSCAN_API_KEY = 'J63D8EW6TS7FA5ZT5T9448FEFJ6Q92AS28'
+# Load API key from environment variable for security
+ETHERSCAN_API_KEY = ENV['ETHERSCAN_API_KEY']
 
 class EthTxExporter
   ETHERSCAN_BASE = 'https://api.etherscan.io/v2/api?chainid=1'
+  HEADERS = [
+    'Transaction Hash', 'Date & Time', 'From Address', 'To Address', 'Transaction Type',
+    'Asset Contract Address', 'Asset Symbol / Name', 'Token ID', 'Value / Amount', 'Gas Fee (ETH)'
+  ]
+  ACTIONS = {
+    normal: 'txlist',
+    internal: 'txlistinternal',
+    erc20: 'tokentx',
+    erc721: 'tokennfttx'
+  }
 
   def initialize(address)
     @address = address
+    unless ETHERSCAN_API_KEY && !ETHERSCAN_API_KEY.empty?
+      raise "ETHERSCAN_API_KEY environment variable not set."
+    end
   end
 
+  # Fetch transactions for a given action, with error handling
   def fetch_transactions(action)
     params = {
       module: 'account',
@@ -18,73 +34,96 @@ class EthTxExporter
       apikey: ETHERSCAN_API_KEY,
       action: action
     }
-    response = HTTParty.get(ETHERSCAN_BASE, query: params)
-    data = response.parsed_response
-    return [] unless data['status'] == '1'
-    data['result']
+    begin
+      response = HTTParty.get(ETHERSCAN_BASE, query: params, timeout: 15)
+      if response.code != 200
+        warn "HTTP error for action '#{action}': #{response.code}"
+        return []
+      end
+      data = response.parsed_response
+      unless data.is_a?(Hash) && data['status'] == '1'
+        warn "API error for action '#{action}': #{data['message'] || data.inspect}"
+        return []
+      end
+      data['result']
+    rescue StandardError => e
+      warn "Exception fetching '#{action}': #{e.message}"
+      []
+    end
   end
 
+  # Process and combine all transaction types
   def process
-    normal = fetch_transactions('txlist')
-    internal = fetch_transactions('txlistinternal')
-    erc20 = fetch_transactions('tokentx')
-    erc721 = fetch_transactions('tokennfttx')
-
     all_txs = []
+    tx_data = {}
+    ACTIONS.each do |type, action|
+      tx_data[type] = fetch_transactions(action)
+    end
 
-    # External (Normal) Transfers
-    normal.each do |tx|
-      all_txs << {
+    all_txs.concat format_normal(tx_data[:normal])
+    all_txs.concat format_internal(tx_data[:internal])
+    all_txs.concat format_erc20(tx_data[:erc20])
+    all_txs.concat format_erc721(tx_data[:erc721])
+    all_txs
+  end
+
+  # Formatters for each transaction type
+  def format_normal(txs)
+    Array(txs).map do |tx|
+      {
         'Transaction Hash' => tx['hash'],
-        'Date & Time' => Time.at(tx['timeStamp'].to_i).utc.strftime('%Y-%m-%d %H:%M:%S'),
+        'Date & Time' => format_time(tx['timeStamp']),
         'From Address' => tx['from'],
         'To Address' => tx['to'],
         'Transaction Type' => tx['input'] == '0x' ? 'ETH transfer' : 'Contract Interaction',
         'Asset Contract Address' => '',
         'Asset Symbol / Name' => 'ETH',
         'Token ID' => '',
-        'Value / Amount' => tx['value'].to_f / 1e18,
-        'Gas Fee (ETH)' => tx['gasUsed'].to_i * tx['gasPrice'].to_i / 1e18
+        'Value / Amount' => safe_div(tx['value'], 1e18),
+        'Gas Fee (ETH)' => safe_gas_fee(tx['gasUsed'], tx['gasPrice'])
       }
     end
+  end
 
-    # Internal Transfers
-    internal.each do |tx|
-      all_txs << {
+  def format_internal(txs)
+    Array(txs).map do |tx|
+      {
         'Transaction Hash' => tx['hash'],
-        'Date & Time' => Time.at(tx['timeStamp'].to_i).utc.strftime('%Y-%m-%d %H:%M:%S'),
+        'Date & Time' => format_time(tx['timeStamp']),
         'From Address' => tx['from'],
         'To Address' => tx['to'],
         'Transaction Type' => 'Internal Transfer',
         'Asset Contract Address' => '',
         'Asset Symbol / Name' => 'ETH',
         'Token ID' => '',
-        'Value / Amount' => tx['value'].to_f / 1e18,
+        'Value / Amount' => safe_div(tx['value'], 1e18),
         'Gas Fee (ETH)' => ''
       }
     end
+  end
 
-    # ERC-20
-    erc20.each do |tx|
-      all_txs << {
+  def format_erc20(txs)
+    Array(txs).map do |tx|
+      {
         'Transaction Hash' => tx['hash'],
-        'Date & Time' => Time.at(tx['timeStamp'].to_i).utc.strftime('%Y-%m-%d %H:%M:%S'),
+        'Date & Time' => format_time(tx['timeStamp']),
         'From Address' => tx['from'],
         'To Address' => tx['to'],
         'Transaction Type' => 'ERC-20',
         'Asset Contract Address' => tx['contractAddress'],
         'Asset Symbol / Name' => tx['tokenSymbol'],
         'Token ID' => '',
-        'Value / Amount' => tx['value'].to_f / (10 ** tx['tokenDecimal'].to_i),
+        'Value / Amount' => safe_div(tx['value'], 10 ** (tx['tokenDecimal'].to_i rescue 0)),
         'Gas Fee (ETH)' => ''
       }
     end
+  end
 
-    # ERC-721
-    erc721.each do |tx|
-      all_txs << {
+  def format_erc721(txs)
+    Array(txs).map do |tx|
+      {
         'Transaction Hash' => tx['hash'],
-        'Date & Time' => Time.at(tx['timeStamp'].to_i).utc.strftime('%Y-%m-%d %H:%M:%S'),
+        'Date & Time' => format_time(tx['timeStamp']),
         'From Address' => tx['from'],
         'To Address' => tx['to'],
         'Transaction Type' => 'ERC-721',
@@ -95,31 +134,48 @@ class EthTxExporter
         'Gas Fee (ETH)' => ''
       }
     end
-
-    all_txs
   end
 
+  # Helpers
+  def format_time(ts)
+    Time.at(ts.to_i).utc.strftime('%Y-%m-%d %H:%M:%S') rescue ''
+  end
+
+  def safe_div(val, denom)
+    Float(val) / denom rescue 0
+  end
+
+  def safe_gas_fee(gas_used, gas_price)
+    (gas_used.to_i * gas_price.to_i) / 1e18 rescue 0
+  end
+
+  # Export transactions to CSV with error handling
   def export_csv(filename)
     txs = process
-    headers = [
-      'Transaction Hash', 'Date & Time', 'From Address', 'To Address', 'Transaction Type',
-      'Asset Contract Address', 'Asset Symbol / Name', 'Token ID', 'Value / Amount', 'Gas Fee (ETH)'
-    ]
-    CSV.open(filename, 'w', write_headers: true, headers: headers) do |csv|
-      txs.each { |tx| csv << headers.map { |h| tx[h] } }
+    begin
+      CSV.open(filename, 'w', write_headers: true, headers: HEADERS) do |csv|
+        txs.each { |tx| csv << HEADERS.map { |h| tx[h] } }
+      end
+      puts "Exported #{txs.size} transactions to #{filename}"
+    rescue StandardError => e
+      warn "Failed to write CSV: #{e.message}"
     end
-    puts "Exported #{txs.size} transactions to #{filename}"
   end
 end
 
 # Usage:
-# ruby eth_tx_exporter.rb <wallet_address>
+#   ETHERSCAN_API_KEY=yourkey ruby eth_tx_exporter.rb <wallet_address>
 if __FILE__ == $0
   if ARGV.size != 1
-    puts "Usage: ruby eth_tx_exporter.rb <ethereum_wallet_address>"
+    puts "Usage: ETHERSCAN_API_KEY=yourkey ruby eth_tx_exporter.rb <ethereum_wallet_address>"
     exit 1
   end
   address = ARGV[0]
-  exporter = EthTxExporter.new(address)
-  exporter.export_csv("#{address}_transactions.csv")
+  begin
+    exporter = EthTxExporter.new(address)
+    exporter.export_csv("#{address}_transactions.csv")
+  rescue => e
+    warn "Error: #{e.message}"
+    exit 2
+  end
 end
