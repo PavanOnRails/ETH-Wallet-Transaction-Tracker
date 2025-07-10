@@ -73,3 +73,20 @@ ETHERSCAN_API_KEY=abcdef123456 ruby eth_tx_exporter.rb 0x00000000000000000000000
   ```bash
   bundle exec rubocop
   ```
+
+## Assumptions
+
+- The Etherscan API is available and reliable for all supported transaction types (normal, internal, ERC-20, ERC-721).
+- The user provides a valid Ethereum wallet address and a valid Etherscan API key.
+- All transaction data can be fetched and processed in a single run (suitable for small to medium wallets).
+- The script is intended for command-line use and outputs a single CSV file per wallet address.
+- The CSV format is sufficient for most users' analysis and reporting needs.
+
+## Architecture Decisions
+
+- **Single-file Ruby Script:** The project is implemented as a single Ruby script for simplicity and ease of use, making it easy to run and maintain for individual users.
+- **Modular Transaction Processing:** The code separates transaction fetching and formatting by type (normal, internal, ERC-20, ERC-721) for clarity and extensibility.
+- **Error Handling:** Robust error and exception handling is included for all network and file operations to ensure the script fails gracefully and provides useful feedback.
+- **Environment-based Configuration:** The Etherscan API key is loaded from an environment variable for security and flexibility.
+- **Testing and Linting:** RSpec is used for unit testing and RuboCop for code style, supporting maintainability and code quality.
+- **No Persistent Storage:** All data is processed in-memory and exported to CSV, which is suitable for small to medium datasets. For larger-scale or production use, a database would be recommended.
